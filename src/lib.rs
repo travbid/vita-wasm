@@ -9,8 +9,6 @@ use std::boxed::Box;
 
 #[wasm_bindgen]
 pub fn invert_mat4x4(mat: &mut [f64]) {
-	// log("invert_mat4x4");
-
 	if mat.len() != 16 {
 		return;
 	}
@@ -142,13 +140,13 @@ pub fn inverted_mat4x4(mat: &[f64]) -> Box<[f64]> {
 #[cfg(test)]
 mod tests {
 	#[test]
-	fn inverted() {
+	fn inversion() {
 		#[rustfmt::skip]
-		let mut mat: [f64; 16] = [1.0, 0.0, 1.0, 2.0,
-		                         -1.0, 1.0, 2.0, 0.0,
-		                         -2.0, 0.0, 1.0, 2.0,
-		                          0.0, 0.0, 0.0, 1.0];
-		let res: Box<[f64]> = super::inverted_mat4x4(&mat);
+		let mut mat1: [f64; 16] = [1.0, 0.0, 1.0, 2.0,
+		                          -1.0, 1.0, 2.0, 0.0,
+		                          -2.0, 0.0, 1.0, 2.0,
+		                           0.0, 0.0, 0.0, 1.0];
+		let res: Box<[f64]> = super::inverted_mat4x4(&mat1);
 
 		#[rustfmt::skip]
 		let expected1: [f64; 16] = [1.0/3.0, 0.0, -1.0/3.0,  0.0,
@@ -160,15 +158,16 @@ mod tests {
 			assert!((res[i] - expected1[i]).abs() <= core::f64::EPSILON);
 		}
 
-		super::invert_mat4x4(&mut mat);
+		super::invert_mat4x4(&mut mat1);
 		for i in 0..16 {
-			assert!((mat[i] - expected1[i]).abs() <= core::f64::EPSILON);
+			assert!((mat1[i] - expected1[i]).abs() <= core::f64::EPSILON);
 		}
 
-		mat = [4.0, 0.0, 0.0, 0.0,
-		       0.0, 0.0, 2.0, 0.0,
-		       0.0, 1.0, 2.0, 0.0,
-		       1.0, 0.0, 0.0, 1.0];
+		#[rustfmt::skip]
+		let mut mat2 = [4.0, 0.0, 0.0, 0.0,
+		                0.0, 0.0, 2.0, 0.0,
+		                0.0, 1.0, 2.0, 0.0,
+		                1.0, 0.0, 0.0, 1.0];
 
 		#[rustfmt::skip]
 		let expected2: [f64; 16] = [0.25, 0.0, 0.0, 0.0,
@@ -176,14 +175,14 @@ mod tests {
 		                            0.0,  0.5, 0.0, 0.0,
 		                           -0.25, 0.0, 0.0, 1.0];
 
-		let res2 = super::inverted_mat4x4(&mat);
+		let res2 = super::inverted_mat4x4(&mat2);
 		for i in 0..16 {
 			assert!((res2[i] - expected2[i]).abs() <= core::f64::EPSILON);
 		}
 
-		super::invert_mat4x4(&mut mat);
+		super::invert_mat4x4(&mut mat2);
 		for i in 0..16 {
-			assert!((mat[i] - expected2[i]).abs() <= core::f64::EPSILON);
+			assert!((mat2[i] - expected2[i]).abs() <= core::f64::EPSILON);
 		}
 	}
 }
