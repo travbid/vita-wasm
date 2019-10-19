@@ -137,6 +137,56 @@ pub fn inverted_mat4x4(mat: &[f64]) -> Box<[f64]> {
 	Box::new(res)
 }
 
+#[wasm_bindgen]
+pub fn rotate_mat4x4(mat: &mut [f64], angle: f64, axis: &[f64]) {
+	if mat.len() != 16 || axis.len() != 3 {
+		return;
+	}
+
+	const EPSILON: f64 = 0.00001;
+	let mut x = axis[0];
+	let mut y = axis[1];
+	let mut z = axis[2];
+	let mut len = ((x * x) + (y * y) + (z * z)).sqrt();
+
+	if len < EPSILON {
+		return;
+	}
+
+	len = 1.0 / len;
+	x *= len;
+	y *= len;
+	z *= len;
+
+	let s = angle.sin();
+	let c = angle.cos();
+	let t = 1.0 - c;
+
+	// Construct the elements of the rotation matrix
+	let b00 = x * x * t + c;     let b01 = x * y * t - z * s; let b02 = x * z * t + y * s;
+	let b10 = y * x * t + z * s; let b11 = y * y * t + c;     let b12 = y * z * t - x * s;
+	let b20 = x * z * t - y * s; let b21 = y * z * t + x * s; let b22 = z * z * t + c;
+
+	let a00 = mat[0]; let a01 = mat[1]; let a02 = mat[2];  let a03 = mat[3];
+	let a10 = mat[4]; let a11 = mat[5]; let a12 = mat[6];  let a13 = mat[7];
+	let a20 = mat[8]; let a21 = mat[9]; let a22 = mat[10]; let a23 = mat[11];
+
+	mat[0] = b00 * a00 + b01 * a10 + b02 * a20;
+	mat[1] = b00 * a01 + b01 * a11 + b02 * a21;
+	mat[2] = b00 * a02 + b01 * a12 + b02 * a22;
+	mat[3] = b00 * a03 + b01 * a13 + b02 * a23;
+
+	mat[4] = b10 * a00 + b11 * a10 + b12 * a20;
+	mat[5] = b10 * a01 + b11 * a11 + b12 * a21;
+	mat[6] = b10 * a02 + b11 * a12 + b12 * a22;
+	mat[7] = b10 * a03 + b11 * a13 + b12 * a23;
+
+	mat[8] = b20 * a00 + b21 * a10 + b22 * a20;
+	mat[9] = b20 * a01 + b21 * a11 + b22 * a21;
+	mat[10] = b20 * a02 + b21 * a12 + b22 * a22;
+	mat[11] = b20 * a03 + b21 * a13 + b22 * a23;
+}
+
 #[cfg(test)]
 mod tests {
 	#[test]
@@ -181,6 +231,41 @@ mod tests {
 		}
 
 		super::invert_mat4x4(&mut mat2);
+		for i in 0..16 {
+			assert!((mat2[i] - expected2[i]).abs() <= core::f64::EPSILON);
+		}
+	}
+
+	#[test]
+	fn rotation() {
+		const PI: f64 = 3.141592653589793238462643383279502884;
+		#[rustfmt::skip]
+		let mut mat1: [f64; 16] = [1.0, 0.0, 0.0, 1.0,
+		                           0.0, 1.0, 0.0, 0.0,
+		                           0.0, 0.0, 1.0, 0.0,
+		                           0.0, 0.0, 0.0, 0.0];
+		#[rustfmt::skip]
+		let expected1: [f64; 16] = [0.0, 0.0, 1.0,  0.0,
+		                            0.0, 1.0, 0.0,  0.0,
+		                           -1.0, 0.0, 0.0, -1.0,
+		                            0.0, 0.0, 0.0,  0.0];
+		super::rotate_mat4x4(&mut mat1, PI / 2.0, &[0.0, 1.0, 0.0]);
+		for i in 0..16 {
+			assert!((mat1[i] - expected1[i]).abs() <= core::f64::EPSILON);
+		}
+
+		#[rustfmt::skip]
+		let mut mat2: [f64; 16] = [1.0, 0.0, 0.0, 0.0,
+		                           0.0, 1.0, 0.0, 1.0,
+		                           0.0, 0.0, 1.0, 0.0,
+		                           0.0, 0.0, 0.0, 0.0];
+
+		#[rustfmt::skip]
+		let expected2: [f64; 16] = [0.0, -1.0, 0.0, -1.0,
+		                            1.0,  0.0, 0.0,  0.0,
+		                            0.0,  0.0, 1.0,  0.0,
+		                            0.0,  0.0, 0.0,  0.0];
+		super::rotate_mat4x4(&mut mat2, PI / 2.0, &[0.0, 0.0, 1.0]);
 		for i in 0..16 {
 			assert!((mat2[i] - expected2[i]).abs() <= core::f64::EPSILON);
 		}
