@@ -12,3 +12,5 @@ wasm-bindgen = "^0.2.51"
 
 [profile.release]
 lto = true
+opt-level = 's'
+# opt-level = 'z' # To even more aggressively optimize for size, at further potential speed costs
