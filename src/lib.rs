@@ -1,6 +1,283 @@
+use core::convert::TryInto;
+use std::boxed::Box;
+use std::collections::HashMap;
+use std::collections::HashSet;
+
 use wasm_bindgen::prelude::*;
 
-use std::boxed::Box;
+#[allow(non_camel_case_types)]
+// type int = isize;
+#[allow(non_camel_case_types)]
+type unt = usize;
+
+#[derive(Clone, PartialOrd)]
+struct Vertex {
+	x: f32,
+	y: f32,
+	z: f32,
+}
+
+// Must be derived manually because Hash is manually derived
+impl PartialEq for Vertex {
+	fn eq(&self, other: &Self) -> bool {
+		self.x.to_bits() == other.x.to_bits()
+			&& self.y.to_bits() == other.y.to_bits()
+			&& self.z.to_bits() == other.z.to_bits()
+	}
+}
+
+impl Eq for Vertex {} // Required for Ord
+
+impl Ord for Vertex {
+	fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+		let diff = (self.x + self.y + self.z) - (other.x + other.y + other.z);
+		if diff > 0.0 {
+			core::cmp::Ordering::Greater
+		} else if diff < 0.0 {
+			core::cmp::Ordering::Less
+		} else {
+			core::cmp::Ordering::Equal
+		}
+	}
+}
+
+impl core::hash::Hash for Vertex {
+	fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+		self.x.to_bits().hash(state);
+		self.y.to_bits().hash(state);
+		self.z.to_bits().hash(state);
+	}
+}
+
+#[derive(Eq, Ord, PartialOrd)]
+struct Edge {
+	a: u32,
+	b: u32,
+}
+
+// Equal even if a and b are swapped
+impl PartialEq for Edge {
+	fn eq(&self, other: &Self) -> bool {
+		(self.a == other.a && self.b == other.b) || (self.a == other.b && self.b == other.a)
+	}
+}
+
+impl core::hash::Hash for Edge {
+	fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+		let (x, y) = if self.a > self.b {
+			(self.a, self.b)
+		} else {
+			(self.b, self.a)
+		};
+		x.hash(state);
+		y.hash(state);
+	}
+}
+
+#[wasm_bindgen(js_name = "parseSTL")]
+pub fn parse_stl(
+	buf: Vec<u8>,
+	vertices: &mut [f32],
+	normals: &mut [f32],
+	v_indices: &mut [u32],
+	e_indices: &mut [u32],
+) -> Option<String> {
+	if buf.len() < 80 {
+		return Some(String::from(
+			"File is too small to be an STL. File header should be 80 bytes.",
+		));
+	}
+	if buf.len() < 84 {
+		return Some(String::from(
+			"File is too small to be an STL. There should be a UINT32 at position 80.",
+		));
+	}
+
+	let mut b: [u8; 4] = [0, 0, 0, 0];
+	b.copy_from_slice(&buf[80..84]);
+	let num_triangles = u32::from_le_bytes(b);
+	println!("num_triangles = {}", num_triangles);
+
+	// FRAME_SIZE = (4 * vertex) + Uint16 (1 Normal, 3 Vertices, 1 Attribute byte count)
+	//            = (4 * 3 * 4) + 2 = 50
+	const FRAME_SIZE: unt = 4 * 3 * std::mem::size_of::<f32>() + std::mem::size_of::<u16>();
+
+	if buf.len() < 84 + (num_triangles as unt) * FRAME_SIZE {
+		let s: String = format!(
+			"Invalid STL. {} triangles declared but only {} bytes in file",
+			num_triangles,
+			buf.len()
+		);
+		return Some(s);
+	}
+
+	match check_sufficient_memory(num_triangles, vertices, normals, v_indices, e_indices) {
+		Some(s) => return Some(s),
+		None => (),
+	};
+
+	let mut vset = HashMap::<Vertex, u32>::new();
+	vset.reserve((num_triangles as unt / 2) + 2);
+	let mut eset = HashSet::<Edge>::new();
+	eset.reserve((num_triangles as f32 * 1.5) as unt);
+	let mut norm_count = Vec::<u32>::new();
+	norm_count.resize((num_triangles as unt / 2) + 2, 0);
+
+	let mut vpos = 0;
+	let mut epos = 0;
+	for i in 0..num_triangles as unt {
+		let fpos = 84 + i * FRAME_SIZE;
+
+		let normal = read_vertex(&buf[fpos..]).unwrap();
+
+		let mut indexes: [u32; 3] = [0, 0, 0];
+
+		for j in 0..3 {
+			let v = read_vertex(&buf[fpos + (12 * (j+1))..]).unwrap();
+			let index: u32 = match vset.get(&v) {
+				Some(idx) => {
+					if (idx * 3) as unt + 2 >= normals.len() { return Some(format!("normals bound exceeded: idx*3+2 {}, len: {}, i: {}", idx*3+2, normals.len(), i)); }
+					normals[(idx * 3) as unt + 0] += normal.x;
+					normals[(idx * 3) as unt + 1] += normal.y;
+					normals[(idx * 3) as unt + 2] += normal.z;
+					*idx
+				}
+				None => {
+					let idx = (vpos / 3) as u32;
+					if vpos+2 >= vertices.len() { return Some(format!("vertices bound exceeded: {}, len: {}, i: {}", vpos, vertices.len(), i)); }
+					vertices[vpos + 0] = v.x;
+					vertices[vpos + 1] = v.y;
+					vertices[vpos + 2] = v.z;
+					if vpos+2 >= normals.len() { return Some(format!("normals bound exceeded: vpos {}, len: {}, i: {}", vpos, normals.len(), i)); }
+					normals[vpos + 0] = normal.x;
+					normals[vpos + 1] = normal.y;
+					normals[vpos + 2] = normal.z;
+					vpos += 3;
+					vset.insert(v, idx);
+					idx
+				}
+			};
+			if (i * 3) + j >= v_indices.len() { return Some(format!("v_indices bound exceeded: {}, len: {}, i: {}", (i*3)+j, v_indices.len(), i)); }
+			v_indices[(i * 3) + j] = index;
+			if index as unt >= norm_count.len() { return Some(format!("norm_count bound exceeded: {}, len: {}, i: {}", index, norm_count.len(), i)); }
+			norm_count[index as unt] += 1;
+			indexes[j] = index;
+			// return Some(format!("first vertex"));
+		}
+
+		// return Some(format!("first vertices"));
+
+		let edge1 = Edge {
+			a: indexes[0],
+			b: indexes[1],
+		};
+		if !eset.contains(&edge1) {
+			e_indices[epos] = indexes[0];
+			e_indices[epos + 1] = indexes[1];
+			epos += 2;
+			eset.insert(edge1);
+		}
+
+		let edge2 = Edge {
+			a: indexes[1],
+			b: indexes[2],
+		};
+		if !eset.contains(&edge2) {
+			e_indices[epos] = indexes[1];
+			e_indices[epos + 1] = indexes[2];
+			epos += 2;
+			eset.insert(edge2);
+		}
+
+		let edge3 = Edge {
+			a: indexes[2],
+			b: indexes[0],
+		};
+		if !eset.contains(&edge3) {
+			e_indices[epos] = indexes[2];
+			e_indices[epos + 1] = indexes[0];
+			epos += 2;
+			eset.insert(edge3);
+		}
+
+		// return Some(format!("First iteration"));
+	}
+
+	// return Some(format!("loop finished"));
+
+	for i in 0..vpos {
+		normals[i] /= norm_count[i / 3] as f32;
+	}
+
+	None
+}
+
+fn check_sufficient_memory(
+	num_triangles: u32,
+	vertices: &[f32],
+	normals: &[f32],
+	v_indices: &[u32],
+	e_indices: &[u32],
+) -> Option<String> {
+	let len_req = 3 * ((num_triangles as unt / 2) + 2);
+	if vertices.len() < len_req {
+		let s: String = format!(
+			"Insufficient memory allocated for vertices. {} float64 elements allocated, but {} required for {} triangles",
+			vertices.len(),
+			len_req,
+			num_triangles,
+		);
+		return Some(s);
+	}
+
+	if normals.len() < len_req {
+		let s: String = format!(
+			"Insufficient memory allocated for normals. {} float64 elements allocated, but {} required for {} triangles",
+			normals.len(),
+			len_req,
+			num_triangles,
+		);
+		return Some(s);
+	}
+
+	let len_req = num_triangles as unt * 3;
+	if v_indices.len() < len_req {
+		let s: String = format!(
+			"Insufficient memory allocated for vertex indices. {} float64 elements allocated, but {} required for {} triangles",
+			v_indices.len(),
+			len_req,
+			num_triangles,
+		);
+		return Some(s);
+	}
+
+	if e_indices.len() < len_req {
+		let s: String = format!(
+			"Insufficient memory allocated for edge indices. {} float64 elements allocated, but {} required for {} triangles",
+			e_indices.len(),
+			len_req,
+			num_triangles,
+		);
+		return Some(s);
+	}
+
+	None
+}
+
+fn read_vertex(buf: &[u8]) -> Result<Vertex, std::array::TryFromSliceError> {
+	let f0 = f32_from_le_bytes(buf[0..4].try_into()?);
+	let f1 = f32_from_le_bytes(buf[4..8].try_into()?);
+	let f2 = f32_from_le_bytes(buf[8..12].try_into()?);
+	Ok(Vertex {
+		x: f0,
+		y: f1,
+		z: f2,
+	})
+}
+
+pub fn f32_from_le_bytes(bytes: [u8; 4]) -> f32 {
+	f32::from_bits(u32::from_le_bytes(bytes))
+}
 
 // #[wasm_bindgen]
 // extern "C" {
