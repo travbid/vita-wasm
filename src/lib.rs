@@ -284,7 +284,7 @@ pub fn f32_from_le_bytes(bytes: [u8; 4]) -> f32 {
 // 	pub fn log(s: &str);
 // }
 
-#[wasm_bindgen(js_name="invertMat4x4")]
+#[wasm_bindgen(js_name = "invertMat4x4")]
 pub fn invert_mat4x4(mat: &mut [f64]) {
 	if mat.len() != 16 {
 		return;
@@ -346,7 +346,7 @@ pub fn invert_mat4x4(mat: &mut [f64]) {
 	mat[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
 }
 
-#[wasm_bindgen(js_name="invertedMat4x4")]
+#[wasm_bindgen(js_name = "invertedMat4x4")]
 pub fn inverted_mat4x4(mat: &[f64]) -> Box<[f64]> {
 	// log("invert_mat4x4");
 
@@ -414,7 +414,7 @@ pub fn inverted_mat4x4(mat: &[f64]) -> Box<[f64]> {
 	Box::new(res)
 }
 
-#[wasm_bindgen(js_name="rotateMat4x4")]
+#[wasm_bindgen(js_name = "rotateMat4x4")]
 pub fn rotate_mat4x4(mat: &mut [f64], angle: f64, axis: &[f64]) {
 	if mat.len() != 16 || axis.len() != 3 {
 		return;
