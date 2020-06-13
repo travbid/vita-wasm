@@ -1,3 +1,5 @@
+#![allow(clippy::identity_op)]
+
 use core::convert::TryInto;
 use std::boxed::Box;
 use std::collections::HashMap;
@@ -111,9 +113,8 @@ pub fn parse_stl(
 		return Some(s);
 	}
 
-	match check_sufficient_memory(num_triangles, vertices, normals, v_indices, e_indices) {
-		Some(s) => return Some(s),
-		None => (),
+	if let Some(s) = check_sufficient_memory(num_triangles, vertices, normals, v_indices, e_indices) {
+		return Some(s);
 	};
 
 	let mut vset = HashMap::<Vertex, u32>::new();
@@ -133,10 +134,17 @@ pub fn parse_stl(
 		let mut indexes: [u32; 3] = [0, 0, 0];
 
 		for j in 0..3 {
-			let v = read_vertex(&buf[fpos + (12 * (j+1))..]).unwrap();
+			let v = read_vertex(&buf[fpos + (12 * (j + 1))..]).unwrap();
 			let index: u32 = match vset.get(&v) {
 				Some(idx) => {
-					if (idx * 3) as unt + 2 >= normals.len() { return Some(format!("normals bound exceeded: idx*3+2 {}, len: {}, i: {}", idx*3+2, normals.len(), i)); }
+					if (idx * 3) as unt + 2 >= normals.len() {
+						return Some(format!(
+							"normals bound exceeded: idx*3+2 {}, len: {}, i: {}",
+							idx * 3 + 2,
+							normals.len(),
+							i
+						));
+					}
 					normals[(idx * 3) as unt + 0] += normal.x;
 					normals[(idx * 3) as unt + 1] += normal.y;
 					normals[(idx * 3) as unt + 2] += normal.z;
@@ -144,11 +152,25 @@ pub fn parse_stl(
 				}
 				None => {
 					let idx = (vpos / 3) as u32;
-					if vpos+2 >= vertices.len() { return Some(format!("vertices bound exceeded: {}, len: {}, i: {}", vpos, vertices.len(), i)); }
+					if vpos + 2 >= vertices.len() {
+						return Some(format!(
+							"vertices bound exceeded: {}, len: {}, i: {}",
+							vpos,
+							vertices.len(),
+							i
+						));
+					}
 					vertices[vpos + 0] = v.x;
 					vertices[vpos + 1] = v.y;
 					vertices[vpos + 2] = v.z;
-					if vpos+2 >= normals.len() { return Some(format!("normals bound exceeded: vpos {}, len: {}, i: {}", vpos, normals.len(), i)); }
+					if vpos + 2 >= normals.len() {
+						return Some(format!(
+							"normals bound exceeded: vpos {}, len: {}, i: {}",
+							vpos,
+							normals.len(),
+							i
+						));
+					}
 					normals[vpos + 0] = normal.x;
 					normals[vpos + 1] = normal.y;
 					normals[vpos + 2] = normal.z;
@@ -157,9 +179,23 @@ pub fn parse_stl(
 					idx
 				}
 			};
-			if (i * 3) + j >= v_indices.len() { return Some(format!("v_indices bound exceeded: {}, len: {}, i: {}", (i*3)+j, v_indices.len(), i)); }
+			if (i * 3) + j >= v_indices.len() {
+				return Some(format!(
+					"v_indices bound exceeded: {}, len: {}, i: {}",
+					(i * 3) + j,
+					v_indices.len(),
+					i
+				));
+			}
 			v_indices[(i * 3) + j] = index;
-			if index as unt >= norm_count.len() { return Some(format!("norm_count bound exceeded: {}, len: {}, i: {}", index, norm_count.len(), i)); }
+			if index as unt >= norm_count.len() {
+				return Some(format!(
+					"norm_count bound exceeded: {}, len: {}, i: {}",
+					index,
+					norm_count.len(),
+					i
+				));
+			}
 			norm_count[index as unt] += 1;
 			indexes[j] = index;
 			// return Some(format!("first vertex"));
@@ -268,11 +304,7 @@ fn read_vertex(buf: &[u8]) -> Result<Vertex, std::array::TryFromSliceError> {
 	let f0 = f32_from_le_bytes(buf[0..4].try_into()?);
 	let f1 = f32_from_le_bytes(buf[4..8].try_into()?);
 	let f2 = f32_from_le_bytes(buf[8..12].try_into()?);
-	Ok(Vertex {
-		x: f0,
-		y: f1,
-		z: f2,
-	})
+	Ok(Vertex { x: f0, y: f1, z: f2 })
 }
 
 pub fn f32_from_le_bytes(bytes: [u8; 4]) -> f32 {
@@ -435,14 +467,14 @@ pub fn rotate_mat4x4(mat: &mut [f64], angle: f64, axis: &[f64]) {
 	y *= len;
 	z *= len;
 
-	let s = angle.sin();
-	let c = angle.cos();
-	let t = 1.0 - c;
+	let sina = angle.sin();
+	let cosa = angle.cos();
+	let t = 1.0 - cosa;
 
 	// Construct the elements of the rotation matrix
-	let b00 = x * x * t + c;     let b01 = x * y * t - z * s; let b02 = x * z * t + y * s;
-	let b10 = y * x * t + z * s; let b11 = y * y * t + c;     let b12 = y * z * t - x * s;
-	let b20 = x * z * t - y * s; let b21 = y * z * t + x * s; let b22 = z * z * t + c;
+	let b00 = x * x * t + cosa;     let b01 = x * y * t - z * sina; let b02 = x * z * t + y * sina;
+	let b10 = y * x * t + z * sina; let b11 = y * y * t + cosa;     let b12 = y * z * t - x * sina;
+	let b20 = x * z * t - y * sina; let b21 = y * z * t + x * sina; let b22 = z * z * t + cosa;
 
 	let a00 = mat[0]; let a01 = mat[1]; let a02 = mat[2];  let a03 = mat[3];
 	let a10 = mat[4]; let a11 = mat[5]; let a12 = mat[6];  let a13 = mat[7];
@@ -458,8 +490,8 @@ pub fn rotate_mat4x4(mat: &mut [f64], angle: f64, axis: &[f64]) {
 	mat[6] = b10 * a02 + b11 * a12 + b12 * a22;
 	mat[7] = b10 * a03 + b11 * a13 + b12 * a23;
 
-	mat[8] = b20 * a00 + b21 * a10 + b22 * a20;
-	mat[9] = b20 * a01 + b21 * a11 + b22 * a21;
+	mat[8]  = b20 * a00 + b21 * a10 + b22 * a20;
+	mat[9]  = b20 * a01 + b21 * a11 + b22 * a21;
 	mat[10] = b20 * a02 + b21 * a12 + b22 * a22;
 	mat[11] = b20 * a03 + b21 * a13 + b22 * a23;
 }
@@ -515,7 +547,7 @@ mod tests {
 
 	#[test]
 	fn rotation() {
-		const PI: f64 = 3.141592653589793238462643383279502884;
+		const PI: f64 = core::f64::consts::PI;
 		#[rustfmt::skip]
 		let mut mat1: [f64; 16] = [1.0, 0.0, 0.0, 1.0,
 		                           0.0, 1.0, 0.0, 0.0,
