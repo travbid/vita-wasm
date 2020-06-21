@@ -353,7 +353,7 @@ pub fn parse_stl_mesh(
 		for j in 0..3 {
 			let v = read_vertex(&buf[fpos + (12 * (j + 1))..]).unwrap();
 			let index: u32 = match vset.get(&v) {
-				Some(idx) => {
+				Some(&idx) => {
 					if (idx * 3) as unt + 2 >= normals.len() {
 						return Some(format!(
 							"normals bound exceeded: idx*3+2 {}, len: {}, i: {}",
@@ -362,10 +362,13 @@ pub fn parse_stl_mesh(
 							i
 						));
 					}
+					// An STL file has a normal for each triangle. Multiple vertices
+					// will coincide at a mesh point and we want to average out their
+					// normals.
 					normals[(idx * 3) as unt + 0] += normal.x;
 					normals[(idx * 3) as unt + 1] += normal.y;
 					normals[(idx * 3) as unt + 2] += normal.z;
-					*idx
+					idx
 				}
 				None => {
 					let idx = (vpos / 3) as u32;
@@ -533,28 +536,22 @@ pub fn f32_from_le_bytes(bytes: [u8; 4]) -> f32 {
 // 	pub fn log(s: &str);
 // }
 
+// #[wasm_bindgen]
+// pub fn mat_len(mat: &mut [f64]) -> f64 {
+// 	return mat.len() as f64;
+// }
+
+#[rustfmt::skip]
 #[wasm_bindgen(js_name = "invertMat4x4")]
 pub fn invert_mat4x4(mat: &mut [f64]) {
 	if mat.len() != 16 {
 		return;
 	}
 
-	let a00 = mat[0];
-	let a01 = mat[1];
-	let a02 = mat[2];
-	let a03 = mat[3];
-	let a10 = mat[4];
-	let a11 = mat[5];
-	let a12 = mat[6];
-	let a13 = mat[7];
-	let a20 = mat[8];
-	let a21 = mat[9];
-	let a22 = mat[10];
-	let a23 = mat[11];
-	let a30 = mat[12];
-	let a31 = mat[13];
-	let a32 = mat[14];
-	let a33 = mat[15];
+	let a00 = mat[ 0]; let a01 = mat[ 1]; let a02 = mat[ 2]; let a03 = mat[ 3];
+	let a10 = mat[ 4]; let a11 = mat[ 5]; let a12 = mat[ 6]; let a13 = mat[ 7];
+	let a20 = mat[ 8]; let a21 = mat[ 9]; let a22 = mat[10]; let a23 = mat[11];
+	let a30 = mat[12]; let a31 = mat[13]; let a32 = mat[14]; let a33 = mat[15];
 
 	let b00 = a00 * a11 - a01 * a10;
 	let b01 = a00 * a12 - a02 * a10;
@@ -595,6 +592,7 @@ pub fn invert_mat4x4(mat: &mut [f64]) {
 	mat[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
 }
 
+#[rustfmt::skip]
 #[wasm_bindgen(js_name = "invertedMat4x4")]
 pub fn inverted_mat4x4(mat: &[f64]) -> Box<[f64]> {
 	// log("invert_mat4x4");
@@ -603,22 +601,10 @@ pub fn inverted_mat4x4(mat: &[f64]) -> Box<[f64]> {
 		return Box::new([]);
 	}
 
-	let a00 = mat[0];
-	let a01 = mat[1];
-	let a02 = mat[2];
-	let a03 = mat[3];
-	let a10 = mat[4];
-	let a11 = mat[5];
-	let a12 = mat[6];
-	let a13 = mat[7];
-	let a20 = mat[8];
-	let a21 = mat[9];
-	let a22 = mat[10];
-	let a23 = mat[11];
-	let a30 = mat[12];
-	let a31 = mat[13];
-	let a32 = mat[14];
-	let a33 = mat[15];
+	let a00 = mat[ 0]; let a01 = mat[ 1]; let a02 = mat[ 2]; let a03 = mat[ 3];
+	let a10 = mat[ 4]; let a11 = mat[ 5]; let a12 = mat[ 6]; let a13 = mat[ 7];
+	let a20 = mat[ 8]; let a21 = mat[ 9]; let a22 = mat[10]; let a23 = mat[11];
+	let a30 = mat[12]; let a31 = mat[13]; let a32 = mat[14]; let a33 = mat[15];
 
 	let b00 = a00 * a11 - a01 * a10;
 	let b01 = a00 * a12 - a02 * a10;
@@ -663,6 +649,7 @@ pub fn inverted_mat4x4(mat: &[f64]) -> Box<[f64]> {
 	Box::new(res)
 }
 
+#[rustfmt::skip]
 #[wasm_bindgen(js_name = "rotateMat4x4")]
 pub fn rotate_mat4x4(mat: &mut [f64], angle: f64, axis: &[f64]) {
 	if mat.len() != 16 || axis.len() != 3 {
