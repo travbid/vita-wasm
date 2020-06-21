@@ -7,6 +7,8 @@ use std::collections::HashSet;
 
 use wasm_bindgen::prelude::*;
 
+const FRAME_SIZE: unt = 4 * 3 * std::mem::size_of::<f32>() + std::mem::size_of::<u16>();
+
 #[allow(non_camel_case_types)]
 // type int = isize;
 #[allow(non_camel_case_types)]
@@ -19,6 +21,8 @@ struct Vertex {
 	z: f32,
 }
 
+type Normal = Vertex;
+
 // Must be derived manually because Hash is manually derived
 impl PartialEq for Vertex {
 	fn eq(&self, other: &Self) -> bool {
@@ -30,25 +34,18 @@ impl PartialEq for Vertex {
 
 impl Eq for Vertex {} // Required for Ord
 
-impl Ord for Vertex {
-	fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-		let diff = (self.x + self.y + self.z) - (other.x + other.y + other.z);
-		if diff > 0.0 {
-			core::cmp::Ordering::Greater
-		} else if diff < 0.0 {
-			core::cmp::Ordering::Less
-		} else {
-			core::cmp::Ordering::Equal
-		}
-	}
-}
-
 impl core::hash::Hash for Vertex {
 	fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
 		self.x.to_bits().hash(state);
 		self.y.to_bits().hash(state);
 		self.z.to_bits().hash(state);
 	}
+}
+
+struct Triangle {
+	a: u32,
+	b: u32,
+	c: u32,
 }
 
 #[derive(Eq, Ord, PartialOrd)]
@@ -76,21 +73,45 @@ impl core::hash::Hash for Edge {
 	}
 }
 
-#[wasm_bindgen(js_name = "parseSTL")]
-pub fn parse_stl(
-	buf: Vec<u8>,
-	vertices: &mut [f32],
-	normals: &mut [f32],
-	v_indices: &mut [u32],
-	e_indices: &mut [u32],
-) -> Option<String> {
+#[derive(Eq, PartialOrd)]
+struct VEdge {
+	a: Vertex,
+	b: Vertex,
+}
+
+// Equal even if a and b are swapped
+impl PartialEq for VEdge {
+	fn eq(&self, other: &Self) -> bool {
+		(self.a == other.a && self.b == other.b) || (self.a == other.b && self.b == other.a)
+	}
+}
+
+impl core::hash::Hash for VEdge {
+	fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+		if self.a > self.b {
+			self.a.hash(state);
+			self.b.hash(state);
+		} else {
+			self.b.hash(state);
+			self.a.hash(state);
+		};
+	}
+}
+
+fn check_stl(
+	buf: &[u8],
+	vertices: &[f32],
+	normals: &[f32],
+	v_indices: &[u32],
+	e_indices: &[u32],
+) -> Result<u32, String> {
 	if buf.len() < 80 {
-		return Some(String::from(
+		return Err(String::from(
 			"File is too small to be an STL. File header should be 80 bytes.",
 		));
 	}
 	if buf.len() < 84 {
-		return Some(String::from(
+		return Err(String::from(
 			"File is too small to be an STL. There should be a UINT32 at position 80.",
 		));
 	}
@@ -100,21 +121,217 @@ pub fn parse_stl(
 	let num_triangles = u32::from_le_bytes(b);
 	println!("num_triangles = {}", num_triangles);
 
-	// FRAME_SIZE = (4 * vertex) + Uint16 (1 Normal, 3 Vertices, 1 Attribute byte count)
-	//            = (4 * 3 * 4) + 2 = 50
-	const FRAME_SIZE: unt = 4 * 3 * std::mem::size_of::<f32>() + std::mem::size_of::<u16>();
-
 	if buf.len() < 84 + (num_triangles as unt) * FRAME_SIZE {
 		let s: String = format!(
 			"Invalid STL. {} triangles declared but only {} bytes in file",
 			num_triangles,
 			buf.len()
 		);
-		return Some(s);
+		return Err(s);
 	}
 
 	if let Some(s) = check_sufficient_memory(num_triangles, vertices, normals, v_indices, e_indices) {
-		return Some(s);
+		return Err(s);
+	};
+
+	Ok(num_triangles)
+}
+
+fn add_vn_pair_to_map(vmap: &mut HashMap<Vertex, Vec<(Normal, u32)>>, vertex: Vertex, normal: Normal, idx: u32) {
+	match vmap.get_mut(&vertex) {
+		Some(lst) => {
+			lst.push((normal, idx));
+		}
+		None => {
+			let mut entry = Vec::<(Normal, u32)>::new();
+			entry.push((normal, idx));
+			vmap.insert(vertex, entry);
+		}
+	}
+}
+
+fn find_vn_pair_index(vmap: &HashMap<Vertex, Vec<(Normal, u32)>>, v: &Vertex, n: &Normal) -> Option<u32> {
+	match vmap.get(&v) {
+		None => return None,
+		Some(normals) => {
+			for np in normals {
+				let same_x = (np.0.x - n.x).abs() < 0.007_812_5;
+				let same_y = (np.0.y - n.y).abs() < 0.007_812_5;
+				let same_z = (np.0.z - n.z).abs() < 0.007_812_5;
+				if same_x && same_y && same_z {
+					return Some(np.1);
+				}
+			}
+		}
+	};
+
+	None
+}
+
+/// Parse an STL file into a list of vertices, normals, and edges without edges
+/// between coincident, parallel faces.
+#[wasm_bindgen(js_name = "parseSTL")]
+pub fn parse_stl(
+	buf: Vec<u8>,
+	vertices: &mut [f32],
+	normals: &mut [f32],
+	v_indices: &mut [u32],
+	e_indices: &mut [u32],
+) -> Option<String> {
+	// - Form list of triangles (3 vertex indices + normal index)
+	// - Form map of vertex index: Vec<Triangle index>
+	// - Iterate triangles to make edges
+	//   - For each vertex pair:
+	//     - Find common Triangle parents from map
+	//     - If vertex pair exists in other triangle:
+	//       - flat_edge = true;
+	//     - If not flat_edge:
+	//       - Add edge
+	let num_triangles = match check_stl(&buf, vertices, normals, v_indices, e_indices) {
+		Ok(x) => x,
+		Err(s) => return Some(s),
+	};
+
+	let mut triangles = Vec::<Triangle>::with_capacity(num_triangles as unt);
+	let mut map_vertex_triangles = HashMap::<u32, Vec<u32>>::with_capacity((num_triangles as unt * 3) / 2);
+	let mut vmap = HashMap::<Vertex, Vec<(Normal, u32)>>::with_capacity(num_triangles as unt / 2);
+
+	let mut vpos = 0;
+	let mut epos = 0;
+
+	for i in 0..num_triangles as unt {
+		let fpos = 84 + i * FRAME_SIZE;
+
+		let normal = read_vertex(&buf[fpos..]).unwrap();
+
+		let mut indexes: [u32; 3] = [0, 0, 0];
+		// let mut n_idx = 0;
+
+		for j in 0..3 {
+			let v = read_vertex(&buf[fpos + (12 * (j + 1))..]).unwrap();
+			let index: u32 = match find_vn_pair_index(&vmap, &v, &normal) {
+				Some(idx) => idx,
+				None => {
+					let idx = (vpos / 3) as u32;
+					if vpos + 2 >= vertices.len() {
+						return Some(format!(
+							"vertices bound exceeded: {}, len: {}, i: {}",
+							vpos,
+							vertices.len(),
+							i
+						));
+					}
+					vertices[vpos + 0] = v.x;
+					vertices[vpos + 1] = v.y;
+					vertices[vpos + 2] = v.z;
+					if vpos + 2 >= normals.len() {
+						return Some(format!(
+							"normals bound exceeded: vpos {}, len: {}, i: {}",
+							vpos,
+							normals.len(),
+							i
+						));
+					}
+					normals[vpos + 0] = normal.x;
+					normals[vpos + 1] = normal.y;
+					normals[vpos + 2] = normal.z;
+					vpos += 3;
+
+					add_vn_pair_to_map(&mut vmap, v, normal.clone(), idx);
+					idx
+				}
+			};
+			if (i * 3) + j >= v_indices.len() {
+				return Some(format!(
+					"v_indices bound exceeded: {}, len: {}, i: {}",
+					(i * 3) + j,
+					v_indices.len(),
+					i
+				));
+			}
+			v_indices[(i * 3) + j] = index;
+			indexes[j] = index;
+			// if j == 0 {
+			// 	n_idx = index;
+			// }
+
+			match map_vertex_triangles.get_mut(&index) {
+				Some(triangle_list) => triangle_list.push(i as u32),
+				None => {
+					let mut triangle_list = Vec::<u32>::with_capacity(4);
+					triangle_list.push(i as u32);
+					map_vertex_triangles.insert(index, triangle_list);
+				}
+			};
+		}
+
+		triangles.push(Triangle {
+			// n: n_idx,
+			a: indexes[0],
+			b: indexes[1],
+			c: indexes[2],
+		});
+	}
+
+	for (i, t) in triangles.iter().enumerate() {
+		let t_ixs = [t.a, t.b, t.c];
+
+		for x in 0..3 {
+			// for each edge in triangle
+			let a_ix = t_ixs[x];
+			let b_ix = t_ixs[(x + 1) % 3];
+
+			let triangles_with_a = map_vertex_triangles.get(&a_ix).unwrap();
+			let triangles_with_b = map_vertex_triangles.get(&b_ix).unwrap();
+
+			let mut flat_edge = false;
+			for tri_a in triangles_with_a {
+				if *tri_a as unt == i {
+					continue;
+				}
+				for tri_b in triangles_with_b {
+					if *tri_a == *tri_b {
+						flat_edge = true;
+						break;
+					}
+				}
+				if flat_edge {
+					break;
+				}
+			}
+			if !flat_edge {
+				if epos + 1 >= e_indices.len() {
+					return Some(format!(
+						"e_indices bound exceeded: {}, len: {}, i: {}",
+						epos,
+						e_indices.len(),
+						i
+					));
+				}
+				e_indices[epos] = a_ix;
+				e_indices[epos + 1] = b_ix;
+				epos += 2;
+			}
+		}
+	}
+
+	None
+}
+
+/// Parse an STL file into a list of vertices, normals, and edges. Coincident
+/// points are assimilated into the same vertex. Normals are averaged out for
+/// each point.
+#[wasm_bindgen(js_name = "parseSTLMesh")]
+pub fn parse_stl_mesh(
+	buf: Vec<u8>,
+	vertices: &mut [f32],
+	normals: &mut [f32],
+	v_indices: &mut [u32],
+	e_indices: &mut [u32],
+) -> Option<String> {
+	let num_triangles = match check_stl(&buf, vertices, normals, v_indices, e_indices) {
+		Ok(x) => x,
+		Err(s) => return Some(s),
 	};
 
 	let mut vset = HashMap::<Vertex, u32>::new();
